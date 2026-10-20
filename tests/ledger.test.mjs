@@ -87,3 +87,28 @@ test('invalid currency and dates are rejected without floating-point rounding', 
   assert.equal(cents('467.89'), 46789); assert.equal(cents('0.01'), 1); assert.equal(cents('0', true), 0);
   assert.equal(validDate('2026-02-30'), false); assert.equal(validDate('2026-10-01'), true);
 });
+
+test('completion verifies current handoffs, posted GL, linked requests and balances without mutation', async () => {
+  const { completionReport } = await import('../ledger.js');
+  const s = initialState(); assert.equal(completionReport(s).complete, false);
+  saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001'));
+  assert.equal(completionReport(s).verified, 1);
+  for (const id of ['FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) saveWriteback(s, id, input(s, id));
+  const j = saveJournal(s, journalInput(s)); releaseJournal(s, j.id);
+  assert.equal(completionReport(s).complete, false);
+  postJournal(s, j.id);
+  const before = JSON.stringify(s), r = completionReport(s);
+  assert.equal(r.complete, true); assert.equal(r.verified, 6); assert.equal(r.pending, 4); assert.equal(r.posted, 1);
+  assert.deepEqual(completionReport(s), r); assert.equal(JSON.stringify(s), before);
+  for (const corrupt of [
+    x => { x.records['FIN-1002'].values.amount = '1.00'; },
+    x => { x.handoffs[0].revision++; },
+    x => { x.requests[0].values.expected = '1.00'; },
+    x => { x.requests[0].status = 'Executed'; },
+    x => { x.journals[0].status = 'Released'; },
+    x => { x.journals[0].debitAccount = '110300'; },
+    x => { x.balances['110100']++; },
+    x => { x.records['FIN-1006'].requestId = 'MISSING'; },
+    x => { x.requests.push({ ...x.requests[0] }); }
+  ]) { const broken = structuredClone(s); corrupt(broken); assert.equal(completionReport(broken).complete, false); }
+});

@@ -31,6 +31,8 @@ test.afterEach(() => { expect(browserErrors.splice(0)).toEqual([]); });
 
 test('all six UI write-backs, GL release/post, requests, read-back, refresh and reset', async ({ page }) => {
   await expect(page.locator('[data-case]')).toHaveCount(6);
+  await navigate(page, 'completion'); await expect(page.locator('#completion-result')).toHaveText('WRITE-BACK INCOMPLETE');
+  await navigate(page, 'queue');
   // Old-version data is kept separate when the six-scenario run is reset.
   await page.evaluate(() => localStorage.setItem('aeo-lawson-training-v1', JSON.stringify({ version: 1, marker: 'prior-run' })));
   for (const id of ['FIN-1001', 'FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) {
@@ -57,6 +59,13 @@ test('all six UI write-backs, GL release/post, requests, read-back, refresh and 
   await page.reload(); await expect(page.locator('.summary')).toContainText('6 / 6');
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), KEY);
   expect(saved.audit).toHaveLength(8); expect(saved.requests).toHaveLength(4); expect(saved.journals[0].status).toBe('Posted');
+  await navigate(page, 'completion');
+  await expect(page.locator('#completion-result')).toHaveText('WRITE-BACK COMPLETE');
+  await expect(page.locator('#content')).toContainText('4');
+  await expect(page.locator('#content')).toContainText('Pending payments execution');
+  await page.screenshot({ path: 'test-results/writeback-complete.png', fullPage: true });
+  await page.locator('#content [data-action=refresh]').click();
+  await expect(page.locator('#completion-result')).toHaveText('WRITE-BACK COMPLETE');
   await page.locator('#reset').click(); await page.locator('#confirm-dialog').click();
   await expect(page.locator('.summary')).toContainText('0 / 6');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('aeo-lawson-training-v1')).marker)).toBe('prior-run');

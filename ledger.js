@@ -170,3 +170,59 @@ export function postJournal(state, id) {
   state.records[j.caseId] = record;
   log(state, 'POST', j.caseId, `GL190 completed • ${id} • debit ${j.debitAccount} / credit ${j.creditAccount} USD ${money(j.debit)} • payment classification corrected. Original POS reference retained.`); return record;
 }
+
+// Revalidate saved destinations against the current handoffs and linked ledger entries.
+// This is a training integrity check, not proof of payment execution.
+export function completionReport(state) {
+  const cases = definitions.map(d => {
+    const r = state.records?.[d.id];
+    try {
+      requireThat(r && r.id && r.savedAt, 'Write-back has not been saved.');
+      const h = getHandoff(state, d.id);
+      requireThat(h.manager && h.confirmedAt, 'Manager confirmation is missing.');
+      requireThat(r.caseId === d.id && r.handoffRevision === h.revision, 'Saved handoff revision does not match.');
+      const scratch = initialState(); scratch.handoffs = structuredClone(state.handoffs);
+      let expected;
+      if (d.id === 'FIN-1002') {
+        const linked = state.journals.filter(j => j.caseId === d.id);
+        requireThat(linked.length === 1, 'Expected exactly one correcting journal.');
+        const j = linked[0];
+        requireThat(j.status === 'Posted' && j.postedAt && r.journalId === j.id, 'Correcting journal must be posted.');
+        const checked = validateJournal(scratch, { ...j, debit: (j.debit / 100).toFixed(2), credit: (j.credit / 100).toFixed(2), attest: true });
+        requireThat(j.revision === checked.revision, 'Journal handoff revision does not match.');
+        const replay = saveJournal(scratch, { ...j, debit: (j.debit / 100).toFixed(2), credit: (j.credit / 100).toFixed(2), attest: true });
+        releaseJournal(scratch, replay.id); expected = postJournal(scratch, replay.id);
+        requireThat(!r.requestId, 'GL record has an unexpected payment request.');
+      } else {
+        expected = saveWriteback(scratch, d.id, { ...r.values, attest: true });
+        const linked = state.requests.filter(q => q.caseId === d.id);
+        requireThat(linked.length === (expected.requestId ? 1 : 0), 'Saved request count does not match the approved action.');
+        requireThat(!r.journalId, 'Unexpected GL journal on a non-GL case.');
+        if (expected.requestId) {
+          const q = linked[0], eq = scratch.requests[0];
+          requireThat(q.id === r.requestId && q.createdAt, 'Linked request is missing.');
+          for (const k of ['caseId', 'destination', 'action', 'status', 'amount']) requireThat(q[k] === eq[k], 'Linked request does not match the saved write-back.');
+          validateWriteback(initialWithHandoffs(state), d.id, { ...q.values, attest: true });
+        } else requireThat(!r.requestId, 'Unexpected request link.');
+      }
+      for (const k of ['caseId', 'destination', 'status', 'amount']) requireThat(r[k] === expected[k], 'Saved destination details do not match.');
+      const values = normalize(d.id, r.values);
+      for (const f of d.fields) {
+        requireThat(f.type === 'money' ? cents(values[f.name], f.name === 'actual') === cents(h.values[f.name], f.name === 'actual') : values[f.name] === h.values[f.name], 'Saved values do not match the current handoff.');
+      }
+      return { id: d.id, verified: true, recordId: r.id, link: r.journalId || r.requestId || 'Settlement match', status: r.status, amount: r.amount };
+    } catch (error) { return { id: d.id, verified: false, reason: error.message, recordId: r?.id || null }; }
+  });
+  const issues = [];
+  try {
+    requireThat(Object.keys(state.records).every(id => definitions.some(d => d.id === id)), 'Unexpected write-back record.');
+    requireThat(state.journals.every(j => j.caseId === 'FIN-1002'), 'Unexpected GL journal.');
+    requireThat(state.requests.every(q => definitions.some(d => d.id === q.caseId)), 'Unexpected payment request.');
+    for (const items of [Object.values(state.records), state.journals, state.requests]) requireThat(new Set(items.map(r => r.id)).size === items.length, 'Duplicate saved identifiers.');
+    const balances = initialState().balances;
+    for (const j of state.journals.filter(j => j.status === 'Posted')) { balances[j.debitAccount] += j.debit; balances[j.creditAccount] -= j.credit; }
+    requireThat(Object.keys(balances).every(k => state.balances[k] === balances[k]), 'Account balances do not match posted journals.');
+  } catch (error) { issues.push(error.message); }
+  return { complete: cases.every(c => c.verified) && !issues.length, verified: cases.filter(c => c.verified).length, cases, issues, pending: state.requests.length, posted: state.journals.filter(j => j.status === 'Posted').length };
+}
+function initialWithHandoffs(state) { const s = initialState(); s.handoffs = structuredClone(state.handoffs); return s; }

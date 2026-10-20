@@ -115,3 +115,13 @@ Research checked October 20, 2026:
 - AEO Staff Accountant posting, September 15, 2026: Lawson / Oracle ERP experience and Cadency reconciliation / journal-entry experience preferred. This corroborates relevance, not the exact production version or integration. https://hcml.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/job/32068
 - Infor GL40.1 documentation: journal definition and release. The companion library lists Journal Control GL45.1, Journal Posting GL190, Account Analysis GL95.1 and Journal Entry Log GL42.1. https://docs.infor.com/lwsnapps/10.1/en-us/lwsncsolh/glhs/gl40_1.html
 - Nogalis Lawson Portal Helpful User Guide, July 16, 2019: compact gray forms, program-code navigation and toolbar conventions. Blue navigation styling also follows historic Lawson Portal screenshots. https://www.nogalis.com/2019/07/16/lawson-portal-helpful-user-guide/
+
+### Completion gate (WB99.1)
+
+Open **Write-back Completion** or enter program **WB99.1**. The page shows
+**WRITE-BACK COMPLETE** only after all six destinations pass verification against
+current handoff revisions and values, linked pending requests, the posted correcting
+journal, and clearing-account balances. Partial or inconsistent runs show
+**WRITE-BACK INCOMPLETE** with case-level reasons. Reopening verification has no
+write side effects. Completion means all approved entries and request handoffs were
+saved; it does not mean pending financial actions were executed.
