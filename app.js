@@ -1,11 +1,11 @@
-import { VERSION, STORAGE_KEY, definitions, accounts, initialState, money, caseAmount, getDefinition, getHandoff, configureHandoff, saveWriteback, journalPlan, saveJournal, releaseJournal, postJournal, completionReport } from './ledger.js?v=3';
+import { VERSION, STORAGE_KEY, definitions, accounts, initialState, money, caseAmount, getDefinition, getHandoff, configureHandoff, saveWriteback, journalPlan, saveJournal, releaseJournal, postJournal, completionReport, stageBatch } from './ledger.js?v=4';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let state, storageError = '';
 try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); state = saved?.version === VERSION ? saved : initialState(); }
 catch { state = initialState(); storageError = 'Browser storage is unavailable. Keep this tab open to retain this run.'; }
-let page = 'queue', selectedCase = 'FIN-1001', selectedJournal = null, selectedRequest = null, filter = '';
-const titles = { completion: ['Write-back Completion', 'WB99.1 · Verification'], queue: ['Reconciliation Worklist', 'RC01.1 · Training extension'], setup: ['Training Handoff Setup', 'DEMO · Confirmed-input fixtures'], entry: ['Journal Entry', 'GL40.1'], control: ['Journal Control', 'GL45.1'], posting: ['Journal Posting', 'GL190'], requests: ['Finance / Payments Requests', 'PM01.1 · Training extension'], inquiry: ['Account Analysis', 'GL95.1'], audit: ['Journal / Change Log', 'GL42.1 · Training view'] };
+let page = location.hash === '#batch' ? 'batch' : 'queue', selectedCase = 'FIN-1001', selectedJournal = null, selectedRequest = null, filter = '';
+const titles = { batch: ['Approved Write-back Batch', 'WB10.1 · Training extension'], completion: ['Write-back Completion', 'WB99.1 · Verification'], queue: ['Reconciliation Worklist', 'RC01.1 · Training extension'], setup: ['Training Handoff Setup', 'DEMO · Confirmed-input fixtures'], entry: ['Journal Entry', 'GL40.1'], control: ['Journal Control', 'GL45.1'], posting: ['Journal Posting', 'GL190'], requests: ['Finance / Payments Requests', 'PM01.1 · Training extension'], inquiry: ['Account Analysis', 'GL95.1'], audit: ['Journal / Change Log', 'GL42.1 · Training view'] };
 const badge = text => `<span class="badge ${text.startsWith('Posted') || text.startsWith('Timing explained') || text.startsWith('Resolved') ? 'done' : text === 'Released' ? 'released' : ''}">${esc(text)}</span>`;
 function message(text, type = '') { $('#status').textContent = text; $('#status').className = type; $('#footer-status').textContent = type === 'error' ? 'Validation error' : text; }
 function commit(operation, success) {
@@ -16,12 +16,12 @@ function commit(operation, success) {
     state = copy; render(); message(storageError || success, storageError ? 'error' : 'success'); return result;
   } catch (error) { message(error.message, 'error'); return null; }
 }
-function go(target) { page = target; filter = ''; render(); window.scrollTo(0, 0); }
+function go(target) { history.replaceState(null, '', target === 'batch' ? '#batch' : location.pathname + location.search); page = target; filter = ''; render(); window.scrollTo(0, 0); }
 function render() {
   const [title, code] = titles[page];
   $('#title').textContent = title; $('#crumb').textContent = title; $('#formcode').textContent = code;
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  $('#content').innerHTML = ({ completion: completionView, queue: queueView, setup: setupView, entry: entryView, control: controlView, posting: postingView, requests: requestsView, inquiry: inquiryView, audit: auditView }[page])();
+  $('#content').innerHTML = ({ batch: batchView, completion: completionView, queue: queueView, setup: setupView, entry: entryView, control: controlView, posting: postingView, requests: requestsView, inquiry: inquiryView, audit: auditView }[page])();
   message(storageError || 'Ready. Six-scenario training system v2.'); bind();
 }
 const toolbar = (extra = '') => `<div class="toolbar"><button data-action="refresh">Inquire / Refresh</button><button data-action="export">Export records</button>${extra}<span class="right">Company 100 · Store 0412 · USD</span></div>`;
@@ -31,7 +31,7 @@ function valuesPanel(id, values, title = 'Saved values') {
 }
 function queueView() {
   const count = Object.keys(state.records).length, pending = state.requests.length;
-  return `${toolbar('<button data-page="setup">Training handoff setup</button><button class="primary" data-page="completion">Verify write-back completion</button>')}
+  return `${toolbar('<button class="primary" data-page="batch">Open batch worksheet</button><button data-page="setup">Training handoff setup</button><button class="primary" data-page="completion">Verify write-back completion</button>')}
     <div class="summary"><div><strong>6</strong><span>Confirmed manager handoffs</span></div><div><strong>${count} / 6</strong><span>Write-backs saved</span></div><div><strong>${pending}</strong><span>Pending finance / payments</span></div><div><strong>${state.journals.filter(j => j.status === 'Posted').length}</strong><span>GL adjustments posted</span></div></div>
     <div class="notice"><b>Manager reconciliation is complete.</b> Enter the confirmed facts into the appropriate destination below. Saved requests remain pending review or execution. The payment-method journal requires its separate finance posting authorization.</div>
     <div class="scrolltable"><table><thead><tr><th>Case</th><th>Manager reconciliation</th><th>Amount / variance USD</th><th>Destination</th><th>Write-back status</th><th></th></tr></thead><tbody>${definitions.map(d => {
@@ -64,6 +64,24 @@ function writebackEditor() {
   }
   return `<h2 class="section-label">Destination entry — ${d.destination}</h2><form id="record-form" class="panel"><div class="panel-title">${d.action}</div><div class="panel-body"><div class="formgrid">${d.fields.map(f => inputField(f)).join('')}</div>${selectedCase === 'FIN-1003' ? '<p class="caption">Variance (expected less actual): <b id="cash-variance">—</b> USD. Finance review does not authorize a write-off.</p>' : ''}${selectedCase === 'FIN-1004' ? '<p class="caption">Available evidence requires a document reference. If unavailable, select Unavailable and enter the manager’s explanation.</p>' : ''}${selectedCase === 'FIN-1005' ? '<p class="caption">Retry requires No existing refund. Pending or unknown refunds must be escalated. Completed refunds must be linked.</p>' : ''}<label class="checkline"><input type="checkbox" name="attest" required> I checked these values against the current confirmed manager handoff.</label><button class="primary" type="submit">${d.action}</button></div></form>`;
 }
+
+function batchView() {
+  const report = completionReport(state), journal = state.journals.find(j => j.caseId === 'FIN-1002');
+  const pending = definitions.filter(d => !state.records[d.id] && !(d.id === 'FIN-1002' && journal));
+  return `${toolbar('<button data-page="queue">Detailed worklist</button><button data-page="completion">Verify write-back completion</button>')}
+    <div class="steps"><div class="${pending.length ? 'current' : 'complete'}">1 · Enter amounts / stage batch</div><div class="${journal?.status === 'Unreleased' ? 'current' : ''}">2 · Release journal</div><div class="${journal?.status === 'Released' ? 'current' : ''}">3 · Post journal</div><div class="${report.complete ? 'complete' : ''}">4 · Verify destinations</div></div>
+    <div class="notice"><b>Approved packets received from the store manager.</b> References, classifications, reasons and evidence below are carried into the destinations unchanged. Enter each approved amount; FIN-1003 takes counted / deposited cash. Staging saves reconciliation / pending requests and an <b>unreleased</b> journal. Release and GL190 posting are separate. No payment is executed.</div>
+    <form id="batch-form"><div class="scrolltable"><table class="batch-table"><thead><tr><th>Case / approved handoff</th><th>Approved facts carried forward</th><th>USD to enter</th><th>Saved destination</th></tr></thead><tbody>${definitions.map(d => {
+      const h = getHandoff(state, d.id), r = state.records[d.id], existing = r || (d.id === 'FIN-1002' && journal), key = d.id === 'FIN-1003' ? 'actual' : 'amount';
+      const label = `${d.id} ${d.id === 'FIN-1003' ? 'counted / deposited cash' : 'amount'} USD`;
+      return `<tr><td><b>${d.id}</b><br>${esc(d.title)}<p class="caption">${esc(h.manager)} · revision ${h.revision}<br>Confirmed ${esc(h.confirmedAt)}</p></td><td class="batch-facts">${d.fields.map(f => `<div><span>${esc(f.label)}:</span> ${esc(h.values[f.name] || '—')}</div>`).join('')}${d.id === 'FIN-1003' ? `<div><b>Variance USD: ${money(caseAmount(h.values))}</b></div>` : ''}</td><td><label for="batch-${d.id}">${esc(label)}</label><input id="batch-${d.id}" name="${d.id}" class="amount" inputmode="decimal" autocomplete="off" ${existing ? `value="${esc(h.values[key])}" readonly` : 'required'}><p class="caption">Approved: <b>${esc(h.values[key])}</b></p></td><td>${esc(r?.id || (existing ? `Journal ${journal.id}` : d.destination))}<br>${esc(r?.status || (existing ? journal.status : 'Awaiting batch entry'))}${r?.requestId ? `<br>${esc(r.requestId)}` : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>
+    ${pending.length ? '<label class="checkline"><input id="batch-attest" name="attest" type="checkbox" required> I reviewed the six current approved packets, amounts, evidence and permitted actions.</label><button class="primary" type="submit">Stage approved batch</button>' : '<p class="state-message">All destinations staged. Continue the journal controls below, then verify completion.</p>'}</form>
+    ${journal ? `<h2 class="section-label">Journal controls · GL40.1 / GL45.1 / GL190</h2>${dataTable([['Journal', journal.id], ['Status', journal.status], ['Source / reference', `${journal.source} / ${journal.reference}`], ['Finance authorization', journal.approval], ['Debit / credit USD', `${journal.debitAccount} ${money(journal.debit)} / ${journal.creditAccount} ${money(journal.credit)}`]])}${journal.status === 'Unreleased' ? `<p><button class="primary" id="batch-release">Release staged journal</button></p>` : journal.status === 'Released' ? '<p><button class="primary" id="batch-post">Submit GL190 posting</button></p>' : '<p class="state-message">GL190 · COMPLETED NORMALLY · 2 posted lines · 0 exceptions</p>'}` : ''}
+    <h2 class="section-label">Saved balance inquiry · GL95.1</h2><div class="batch-balances">${Object.entries(accounts).map(([id, label]) => `<span>${id} ${label}: <b>${money(Math.abs(state.balances[id]))} ${state.balances[id] < 0 ? 'CR' : 'DR'}</b></span>`).join('')}</div>
+    <p class="caption">Illustrative batch extension. Uses the same destination validation, journal controls and audit trail as individual entry.</p>`;
+}
+
 function completionView() {
   const report = completionReport(state);
   return `${toolbar('<button data-page="queue">Return to worklist</button><button data-page="inquiry">Verify balances</button><button data-page="requests">Review pending requests</button>')}
@@ -122,6 +140,23 @@ function modal(title, body, confirm, label = 'Confirm') {
   dialog.showModal();
 }
 function bind() {
+  if ($('#batch-form')) {
+    const revisions = Object.fromEntries(state.handoffs.map(h => [h.id, h.revision]));
+    $('#batch-form').onsubmit = e => {
+      e.preventDefault(); const data = Object.fromEntries(new FormData(e.target));
+      modal('Confirm approved batch', 'Stage the entered amounts with the displayed manager-approved facts and evidence? Existing verified work is retained. New finance / payments requests remain pending. The correcting journal is added as Unreleased; no balances change yet.', () => commit(s => stageBatch(s, data, revisions, data.attest), 'Batch staged. Review and release the correcting journal.'), 'Save staged batch');
+    };
+  }
+  if ($('#batch-release')) $('#batch-release').onclick = () => {
+    const j = state.journals.find(j => j.caseId === 'FIN-1002');
+    // A distinct operator action after reviewing the saved header and balanced lines.
+    commit(s => releaseJournal(s, j.id), `Journal ${j.id} released. GL190 posting is still required.`);
+  };
+  if ($('#batch-post')) $('#batch-post').onclick = () => {
+    const j = state.journals.find(j => j.caseId === 'FIN-1002');
+    modal('Submit GL190 — Journal Posting', `Journal ${j.id} / ${j.reference}<br>Authorization ${esc(j.approval)}<br>Debit ${j.debitAccount}: USD ${money(j.debit)}<br>Credit ${j.creditAccount}: USD ${money(j.credit)}<br>Post this released journal and update the clearing balances?`, () => commit(s => postJournal(s, j.id), `GL190 completed normally. Journal ${j.id} posted.`), 'Post journal');
+  }
+
   document.querySelectorAll('[data-review-case]').forEach(b => b.onclick = () => { selectedCase = b.dataset.reviewCase; go('queue'); });
   document.querySelectorAll('#content [data-page]').forEach(b => b.onclick = () => go(b.dataset.page));
   document.querySelectorAll('[data-case]').forEach(b => b.onclick = () => { selectedCase = b.dataset.case; render(); $('#content .section-label').scrollIntoView({ block: 'start' }); });
@@ -148,9 +183,10 @@ function bind() {
 }
 function download() { const a = document.createElement('a'), url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })); a.href = url; a.download = 'aeo-six-scenario-ledger.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 document.querySelectorAll('#nav [data-page]').forEach(b => b.onclick = () => go(b.dataset.page));
-$('#go').onclick = () => { const codes = { 'WB99.1': 'completion', 'RC01.1': 'queue', 'GL40.1': 'entry', 'GL45.1': 'control', GL190: 'posting', 'GL95.1': 'inquiry', 'GL42.1': 'audit', 'PM01.1': 'requests', DEMO: 'setup' }; const code = $('#program').value.trim().toUpperCase(); if (codes[code]) go(codes[code]); else message('Unknown program. Use RC01.1, GL40.1, GL45.1, GL190, GL95.1, GL42.1, PM01.1 or DEMO.', 'error'); };
+$('#go').onclick = () => { const codes = { 'WB10.1': 'batch', 'WB99.1': 'completion', 'RC01.1': 'queue', 'GL40.1': 'entry', 'GL45.1': 'control', GL190: 'posting', 'GL95.1': 'inquiry', 'GL42.1': 'audit', 'PM01.1': 'requests', DEMO: 'setup' }; const code = $('#program').value.trim().toUpperCase(); if (codes[code]) go(codes[code]); else message('Unknown program. Use RC01.1, GL40.1, GL45.1, GL190, GL95.1, GL42.1, PM01.1 or DEMO.', 'error'); };
 $('#program').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
 $('#reset').onclick = () => modal('Reset six-scenario training data', 'Restore the six example handoffs and clear this v2 run’s journals, write-backs, requests and change log? Other browser profiles and version 1 data are unaffected.', () => { commit(s => { Object.assign(s, initialState()); }, 'Six example handoffs restored.'); selectedCase = 'FIN-1001'; selectedJournal = null; selectedRequest = null; go('queue'); }, 'Reset data');
 $('#help').onclick = () => modal('Six-scenario training help', `<ol class="help-list"><li>Use Training handoff setup to prepare exact synthetic amounts and approved facts.</li><li>Open each case in the worklist. Copy its verified values into the destination form.</li><li>FIN-1002 uses GL40.1 → GL45.1 → GL190, then GL95.1 for balance verification.</li><li>Cash variances and disputes remain pending review. Refund / reversal requests remain pending execution.</li><li>Reopen saved records or requests to verify amounts, references, evidence and statuses.</li><li>Reset training data before another run. State is local to this browser profile.</li></ol><p>The worklist, handoff setup and payments queues are illustrative training extensions. No payments are executed and no real customer data is used.</p><a href="https://docs.infor.com/lwsnapps/10.1/en-us/lwsncsolh/glhs/gl40_1.html" target="_blank" rel="noopener">Lawson GL40.1 documentation</a>`);
+window.addEventListener('hashchange', () => { if (location.hash === '#batch') go('batch'); });
 window.addEventListener('storage', e => { if (e.key === STORAGE_KEY) { try { const next = JSON.parse(e.newValue); if (next?.version === VERSION) { state = next; render(); message('Records refreshed from another tab.'); } } catch { message('Stored data could not be read. Reset training data.', 'error'); } } });
 render();

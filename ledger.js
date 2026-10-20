@@ -226,3 +226,33 @@ export function completionReport(state) {
   return { complete: cases.every(c => c.verified) && !issues.length, verified: cases.filter(c => c.verified).length, cases, issues, pending: state.requests.length, posted: state.journals.filter(j => j.status === 'Posted').length };
 }
 function initialWithHandoffs(state) { const s = initialState(); s.handoffs = structuredClone(state.handoffs); return s; }
+
+// Batch worksheet: reuse the same destination validators and journal state machine.
+// Validate all unsaved work on a copy before changing any persisted destination.
+export function stageBatch(state, inputs, revisions, attest) {
+  requireThat(attest === true || attest === 'on', 'Review the approved packets and attest before staging the batch.');
+  const report = completionReport(state), scratch = structuredClone(state);
+  requireThat(!report.issues.length, report.issues.join(' '));
+  for (const d of definitions) {
+    const h = getHandoff(state, d.id), checked = report.cases.find(c => c.id === d.id);
+    requireThat(h.manager && h.confirmedAt, `${d.id}: manager confirmation is missing.`);
+    requireThat(revisions[d.id] === h.revision, `${d.id}: handoff changed. Refresh the worksheet and review it again.`);
+    if (state.records[d.id]) { requireThat(checked.verified, `${d.id}: saved work failed verification. ${checked.reason}`); continue; }
+    if (d.id === 'FIN-1002' && state.journals.some(j => j.caseId === d.id)) {
+      const journals = scratch.journals.filter(j => j.caseId === d.id);
+      requireThat(journals.length === 1, 'Expected exactly one correcting journal.');
+      const j = journals[0];
+      journalFor(scratch, j.id, j.status);
+      requireThat(j.status === 'Unreleased' || j.status === 'Released', 'Resume the existing journal in Journal Control.');
+      continue;
+    }
+    const value = inputs[d.id], key = d.id === 'FIN-1003' ? 'actual' : 'amount';
+    const values = { ...h.values, [key]: value, attest: true };
+    if (d.id === 'FIN-1002') {
+      validateWriteback(scratch, d.id, values);
+      const plan = journalPlan(scratch);
+      saveJournal(scratch, { ...plan, description: `Reclassify ${h.values.recordedTender} to ${h.values.actualTender} per approved handoff`, debit: value, credit: value, attest: true });
+    } else saveWriteback(scratch, d.id, values);
+  }
+  Object.assign(state, scratch);
+}

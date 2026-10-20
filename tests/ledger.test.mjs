@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, definitions, cents, validDate, configureHandoff, getHandoff, saveWriteback, journalPlan, saveJournal, releaseJournal, postJournal } from '../ledger.js';
+import { initialState, definitions, cents, validDate, configureHandoff, getHandoff, saveWriteback, journalPlan, saveJournal, releaseJournal, postJournal, completionReport } from '../ledger.js';
 const input = (s, id, overrides = {}) => ({ ...getHandoff(s, id).values, attest: true, ...overrides });
 const journalInput = s => { const p = journalPlan(s); return { ...p, debit: (p.amount / 100).toFixed(2), credit: (p.amount / 100).toFixed(2), description: 'Reclassify verified payment method', attest: true }; };
 const unchangedOnError = (s, action) => { const before = JSON.stringify(s); assert.throws(action); assert.equal(JSON.stringify(s), before); };
@@ -111,4 +111,42 @@ test('completion verifies current handoffs, posted GL, linked requests and balan
     x => { x.records['FIN-1006'].requestId = 'MISSING'; },
     x => { x.requests.push({ ...x.requests[0] }); }
   ]) { const broken = structuredClone(s); corrupt(broken); assert.equal(completionReport(broken).complete, false); }
+});
+
+test('batch staging is atomic, honors changed handoffs and preserves separate GL controls', async () => {
+  const { stageBatch } = await import('../ledger.js');
+  const s = initialState();
+  configureHandoff(s, 'FIN-1001', { ...s.handoffs[0].values, amount: '89.17', settlement: 'CUSTOM-BATCH-SETTLEMENT' });
+  const inputs = Object.fromEntries(s.handoffs.map(h => [h.id, h.values[h.id === 'FIN-1003' ? 'actual' : 'amount']]));
+  const revisions = Object.fromEntries(s.handoffs.map(h => [h.id, h.revision]));
+  const before = structuredClone(s);
+  assert.throws(() => stageBatch(s, { ...inputs, 'FIN-1006': '0.01' }, revisions, true), /match/);
+  assert.deepEqual(s, before);
+  assert.throws(() => stageBatch(s, inputs, { ...revisions, 'FIN-1001': 1 }, true), /changed/);
+  assert.throws(() => stageBatch(s, inputs, revisions, false), /attest/);
+  stageBatch(s, inputs, revisions, true);
+  assert.equal(Object.keys(s.records).length, 5);
+  assert.equal(s.records['FIN-1001'].values.settlement, 'CUSTOM-BATCH-SETTLEMENT');
+  assert.equal(s.records['FIN-1001'].amount, 8917);
+  assert.deepEqual(s.balances, before.balances);
+  assert.equal(s.journals[0].status, 'Unreleased');
+  assert.equal(s.requests.length, 4);
+  const staged = structuredClone(s);
+  stageBatch(s, {}, revisions, true); assert.deepEqual(s, staged);
+  assert.throws(() => postJournal(s, s.journals[0].id), /released/);
+  releaseJournal(s, s.journals[0].id); assert.deepEqual(s.balances, before.balances);
+  postJournal(s, s.journals[0].id); assert.equal(completionReport(s).complete, true);
+  const posted = structuredClone(s); stageBatch(s, {}, revisions, true); assert.deepEqual(s, posted);
+});
+
+test('batch staging cannot bypass missing finance authorization or corrupted saved work', async () => {
+  const { stageBatch } = await import('../ledger.js');
+  const s = initialState(); configureHandoff(s, 'FIN-1002', { ...s.handoffs[1].values, approval: '' });
+  const inputs = Object.fromEntries(s.handoffs.map(h => [h.id, h.values[h.id === 'FIN-1003' ? 'actual' : 'amount']]));
+  const revisions = Object.fromEntries(s.handoffs.map(h => [h.id, h.revision]));
+  const before = structuredClone(s);
+  assert.throws(() => stageBatch(s, inputs, revisions, true), /authorization/); assert.deepEqual(s, before);
+  const valid = initialState(); stageBatch(valid, inputs, Object.fromEntries(valid.handoffs.map(h => [h.id, h.revision])), true);
+  valid.requests[0].amount = 1;
+  assert.throws(() => stageBatch(valid, {}, Object.fromEntries(valid.handoffs.map(h => [h.id, h.revision])), true), /verification/);
 });

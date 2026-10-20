@@ -94,3 +94,49 @@ test('legacy desktop appearance remains readable and keyboard labels are usable'
   await navigate(page, 'queue'); await page.screenshot({ path: 'test-results/six-scenario-worklist.png', fullPage: true });
   await openCase(page, 'FIN-1006'); await page.screenshot({ path: 'test-results/duplicate-payment-form.png', fullPage: true });
 });
+
+test('batch worksheet completes through six amount entries and explicit journal controls', async ({ page }) => {
+  await page.goto('./#batch');
+  await expect(page.locator('#title')).toHaveText('Approved Write-back Batch');
+  for (const d of definitions) {
+    await page.getByLabel(`${d.id} ${d.id === 'FIN-1003' ? 'counted / deposited cash' : 'amount'} USD`, { exact: true }).fill(d.values[d.id === 'FIN-1003' ? 'actual' : 'amount']);
+  }
+  await page.locator('#batch-attest').check();
+  await page.getByRole('button', { name: 'Stage approved batch', exact: true }).click();
+  await page.getByRole('button', { name: 'Save staged batch', exact: true }).click();
+  await expect(page.locator('#status')).toContainText('Batch staged');
+  await expect(page.locator('#content')).toContainText('4,100.00 DR');
+  await expect(page.locator('#content')).toContainText('Unreleased');
+  await page.reload(); await expect(page.locator('#title')).toHaveText('Approved Write-back Batch');
+  await page.getByRole('button', { name: 'Release staged journal', exact: true }).click();
+  await expect(page.locator('#content')).toContainText('Released');
+  await page.getByRole('button', { name: 'Submit GL190 posting', exact: true }).click();
+  await page.getByRole('button', { name: 'Post journal', exact: true }).click();
+  await expect(page.locator('#content')).toContainText('COMPLETED NORMALLY');
+  await expect(page.locator('#content')).toContainText('3,780.00 DR');
+  await expect(page.locator('#content')).toContainText('82,720.00 DR');
+  await page.getByRole('button', { name: 'Verify write-back completion', exact: true }).click();
+  await expect(page.locator('#completion-result')).toHaveText('WRITE-BACK COMPLETE');
+  await expect(page.locator('.completion-banner')).toContainText('6 / 6');
+  const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), KEY);
+  expect(saved.requests).toHaveLength(4); expect(saved.journals).toHaveLength(1); expect(saved.audit).toHaveLength(8);
+  await page.screenshot({ path: 'test-results/batch-complete.png', fullPage: true });
+});
+
+test('batch rejects a mistyped amount without partial writes and carries edited approved facts', async ({ page }) => {
+  await setup(page, 'FIN-1001', { amount: '99.47', settlement: 'CUSTOM-SET-99' });
+  await navigate(page, 'batch');
+  await expect(page.locator('#content')).toContainText('CUSTOM-SET-99');
+  for (const d of definitions) await page.locator(`#batch-${d.id}`).fill(d.values[d.id === 'FIN-1003' ? 'actual' : 'amount']);
+  await page.locator('#batch-attest').check();
+  await page.getByRole('button', { name: 'Stage approved batch', exact: true }).click(); await page.locator('#confirm-dialog').click();
+  await expect(page.locator('#status')).toContainText('must match');
+  expect(await page.evaluate(key => Object.keys(JSON.parse(localStorage.getItem(key)).records).length, KEY)).toBe(0);
+  await page.locator('#batch-FIN-1001').fill('99.47');
+  await page.getByRole('button', { name: 'Stage approved batch', exact: true }).click(); await page.locator('#confirm-dialog').click();
+  await expect(page.locator('#status')).toContainText('Batch staged');
+  const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), KEY);
+  expect(saved.records['FIN-1001'].values.settlement).toBe('CUSTOM-SET-99');
+  expect(saved.records['FIN-1001'].amount).toBe(9947);
+  await page.screenshot({ path: 'test-results/batch-worksheet.png', fullPage: true });
+});

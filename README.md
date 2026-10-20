@@ -4,6 +4,15 @@ Public site: https://yonahs-wonderful.github.io/aeo-lawson-demo/
 
 A static legacy-style destination for a computer-use agent after a store manager has reconciled six payment exceptions. All records are synthetic. No authentication or real payment execution. The UI is inspired by Lawson Portal; the reconciliation worklist, handoff setup and payments queues are illustrative extensions, not verified AEO or Infor screens.
 
+
+## Fast batch worksheet (WB10.1)
+
+Open https://yonahs-wonderful.github.io/aeo-lawson-demo/#batch for the preferred agent flow. The six current manager-approved packets appear together. References, classifications, evidence and approved actions carry forward unchanged; the operator enters six monetary values (FIN-1003 takes counted/deposited cash, not variance), reviews the packets and stages the batch.
+
+Staging validates all new rows atomically, saves the five non-GL destinations and adds one Unreleased correcting journal. Wrong amounts, stale handoff revisions, missing evidence or finance authorization reject the batch without partial writes. Matching existing saved work is retained. Review the saved journal, click **Release staged journal**, then **Submit GL190 posting** and **Post journal**. These remain separate actions; staging and release do not change balances. Review the balance inquiry and open **Verify write-back completion** (WB99.1).
+
+This is an illustrative training extension, not a verified Lawson batch screen. The original detailed screens remain available. The agent target is under two minutes; actual runtime must be measured through a real agent run, not the scripted browser tests.
+
 ## Six manager handoffs and resulting write-backs
 
 | Case | Scenario | Default USD | Destination / saved outcome |
@@ -92,7 +101,7 @@ Enter the sale, amount, both payment records, payment to retain, other payment t
 - localStorage key: `aeo-lawson-training-v2`. Data survives reload in the same browser profile. Different browsers have independent runs. Original v1 data is retained separately; it is not interpreted using the new case mapping.
 - No server-side storage or connection to the upstream manager portal. Browser storage must be available for persistence between visits.
 
-Inputs are ordinary labeled HTML fields with stable IDs/names. No sign-in, canvas, shadow DOM or iframes. Program navigation accepts RC01.1, GL40.1, GL45.1, GL190, GL95.1, GL42.1, PM01.1 and DEMO.
+Inputs are ordinary labeled HTML fields with stable IDs/names. No sign-in, canvas, shadow DOM or iframes. Program navigation accepts WB10.1, WB99.1, RC01.1, GL40.1, GL45.1, GL190, GL95.1, GL42.1, PM01.1 and DEMO.
 
 ## Development and validation
 
