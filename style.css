@@ -4,3 +4,5 @@ fieldset{border:1px solid #afbdc7;padding:17px;background:#fff}legend{font-weigh
 .completion-banner{border:2px solid #89794b;background:#f5f0df;padding:22px;margin:16px 0}.completion-banner.verified{border-color:#326642;background:#edf5ed}.completion-banner h2{font: bold 28px monospace;letter-spacing:1px;margin:12px 0}.completion-code{font:12px monospace;color:#47546a}.completion-banner p{margin:9px 0}
 
 .batch-table td{vertical-align:top}.batch-table td:first-child{width:19%}.batch-facts{width:43%;line-height:1.5;overflow-wrap:anywhere}.batch-facts span{color:#60717e}.batch-table label{display:block;font-size:10px;max-width:150px;margin-bottom:6px}.batch-balances{display:flex;gap:20px;flex-wrap:wrap;border:1px solid #b0bbc4;padding:12px;background:#fff}
+
+.entry-packet{border:1px solid #aeb7c0;background:#fff;padding:12px;margin:12px 0}.entry-packet h2{margin:0 0 8px;font-size:16px}.entry-packet p{margin:8px 0}.entry-packet details{margin:8px 0}.entry-packet .formgrid{margin-top:12px}.entry-packet textarea{min-height:64px}
