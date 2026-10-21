@@ -1,5 +1,5 @@
-export const VERSION = 2;
-export const STORAGE_KEY = 'aeo-lawson-training-v2';
+export const VERSION = 3;
+export const STORAGE_KEY = 'aeo-lawson-two-case-v3';
 export const money = value => (value / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const accounts = { '110100': 'Cash clearing', '110200': 'Card clearing', '110300': 'Gift card clearing' };
 const tenderAccount = { Cash: '110100', Card: '110200', 'Gift card': '110300' };
@@ -8,36 +8,16 @@ const sale = field('sale', 'Original sale reference');
 const amount = field('amount', 'Amount USD', 'money');
 const evidence = field('evidence', 'Evidence document reference(s)');
 export const definitions = [
-  { id: 'FIN-1001', title: 'Late settlement after a system outage', destination: 'Reconciliation record', action: 'Save settlement match',
-    instruction: 'Record the matched settlement and daily-cutoff explanation. No journal or payment request is needed.',
-    fields: [sale, amount, field('outage', 'Outage record'), field('settlement', 'Matched settlement reference'), field('settlementDate', 'Settlement date', 'date'), field('reason', 'Resolution reason', 'select', ['Payment settled after daily cutoff']), evidence],
-    values: { sale: 'SALE-0412-0930-1001', amount: '245.50', outage: 'INC-0930-POS-017', settlement: 'SET-1001-0412-1001', settlementDate: '2026-10-01', reason: 'Payment settled after daily cutoff', evidence: 'RECEIPT-1001 / OUTAGE-017 / SETTLEMENT-1001' },
-    manager: 'The sale occurred on September 30 during the outage. The processor confirms settlement on October 1, after the daily cutoff.' },
-  { id: 'FIN-1002', title: 'Incorrect payment method recorded', destination: 'Lawson GL reclassification', action: 'Enter approved reclassification',
-    instruction: 'Reclassify the approved amount from the recorded tender clearing account to the actual tender clearing account. Revenue and total assets remain unchanged.',
+  { id: 'FIN-1002', title: 'Incorrect payment method', destination: 'Lawson GL reclassification', action: 'Enter approved reclassification',
+    instruction: 'Post and verify the approved $58.00 cash-to-card correcting journal. Revenue and total assets remain unchanged.',
     fields: [sale, amount, field('recordedTender', 'Recorded payment method', 'select', ['Cash', 'Card', 'Gift card']), field('actualTender', 'Actual payment method', 'select', ['Cash', 'Card', 'Gift card']), field('approval', 'Finance posting authorization', 'text', null, true), evidence],
-    values: { sale: 'SALE-0412-0929-1002', amount: '320.00', recordedTender: 'Cash', actualTender: 'Card', approval: 'CTRL-2026-0930-018', evidence: 'POS-1002 / PROCESSOR-CARD-1002' },
-    manager: 'The POS classified the payment as cash. The payment record shows a completed card sale. Finance authorized the tender reclassification.' },
-  { id: 'FIN-1003', title: 'Cash shortage or deposit mismatch', destination: 'Finance exception register', action: 'Submit cash / deposit review',
-    instruction: 'Record expected and actual cash, signed evidence, reason and manager explanation. Submit the remaining variance to finance; this does not write off a shortage.',
-    fields: [field('basis', 'Comparison basis', 'select', ['Cash count', 'Bank deposit']), field('expected', 'Expected cash / deposit USD', 'money'), field('actual', 'Counted / deposited USD', 'money'), field('countRef', 'Signed count sheet / deposit record'), field('reason', 'Manager-selected reason', 'select', ['Unexplained shortage', 'Deposit timing', 'Count correction', 'Bank deposit discrepancy']), field('explanation', 'Manager explanation', 'textarea'), evidence],
-    values: { basis: 'Cash count', expected: '4100.00', actual: '3460.00', countRef: 'SIGNED-COUNT-0412-0930', reason: 'Unexplained shortage', explanation: 'Drawer recounted and safe pickups checked. The $640 shortage remains unexplained and requires finance review.', evidence: 'SIGNED-COUNT-0412-0930 / SAFE-PICKUPS-0930' },
-    manager: 'The signed recount and safe-pickup checks are complete. The shortage remains outstanding; manager confirmation does not authorize a write-off.' },
-  { id: 'FIN-1004', title: 'Customer dispute / chargeback', destination: 'Payments dispute queue', action: 'Submit dispute evidence',
-    instruction: 'Send the evidence package or unavailable-evidence explanation to the payments team. Submission does not mean the chargeback has been won or reversed.',
-    fields: [sale, amount, field('dispute', 'Dispute / chargeback reference'), field('deadline', 'Processor response deadline', 'date'), field('evidenceStatus', 'Pickup / sale evidence', 'select', ['Available', 'Unavailable']), field('evidence', 'Pickup / sale evidence reference(s)', 'text', null, true), field('explanation', 'Explanation if evidence unavailable', 'textarea', null, true)],
-    values: { sale: 'SALE-0412-0927-1004', amount: '210.00', dispute: 'CB-2026-1004', deadline: '2026-10-23', evidenceStatus: 'Available', evidence: 'SIGNED-PICKUP-1004 / RECEIPT-1004', explanation: '' },
-    manager: 'The store confirmed the sale and supplied signed pickup evidence. The payments team must respond to the processor before the recorded deadline.' },
-  { id: 'FIN-1005', title: 'Return accepted, refund missing', destination: 'Payments refund queue', action: 'Submit refund resolution',
-    instruction: 'Record the existing-refund check before requesting a retry. Pending or uncertain refunds must be escalated. A completed refund can only be linked, not retried.',
-    fields: [sale, field('returnRef', 'Return receipt'), amount, field('checkRef', 'Existing-refund check reference'), field('existingStatus', 'Existing-refund check result', 'select', ['No existing refund', 'Existing refund pending', 'Existing refund completed', 'Unable to determine']), field('existingRefund', 'Existing refund reference (if found)', 'text', null, true), field('action', 'Approved next action', 'select', ['Refund retry request', 'Escalate to payments', 'Link existing refund']), evidence, field('explanation', 'Manager explanation', 'textarea')],
-    values: { sale: 'SALE-0412-0920-8831', returnRef: 'RET-0412-0928-108', amount: '180.00', checkRef: 'REFUND-LOOKUP-20261001-108', existingStatus: 'No existing refund', existingRefund: '', action: 'Refund retry request', evidence: 'RETURN-RECEIPT-180 / PROCESSOR-LOOKUP-108', explanation: 'Return accepted. Finance checked the original card and processor history; no existing refund was found. Request a payments-team retry.' },
-    manager: 'The return was accepted. The existing-refund check found no completed or pending refund. A retry request is authorized for the payments team.' },
-  { id: 'FIN-1006', title: 'Duplicate charge / unsuccessful void', destination: 'Payments reversal queue', action: 'Submit duplicate-payment request',
-    instruction: 'Retain the manager-confirmed valid charge and target only the other payment for refund or reversal. Both original payment records must remain visible.',
-    fields: [sale, amount, field('paymentA', 'Payment record A'), field('paymentB', 'Payment record B'), field('retain', 'Payment to retain'), field('target', 'Payment to refund / reverse'), field('action', 'Approved next action', 'select', ['Refund request', 'Reversal request']), evidence, field('explanation', 'Manager explanation', 'textarea')],
-    values: { sale: 'SALE-0412-0929-1006', amount: '125.00', paymentA: 'PAY-1006-A', paymentB: 'PAY-1006-B', retain: 'PAY-1006-A', target: 'PAY-1006-B', action: 'Reversal request', evidence: 'RECEIPT-1006 / PAYMENT-A / PAYMENT-B / VOID-FAILED-1006', explanation: 'Payment A is the valid sale. Payment B was charged again and its void failed. Retain A and request reversal of B only.' },
-    manager: 'Payment A is the valid charge. Payment B is the duplicate and the void failed. The manager confirmed which payment to retain.' }
+    values: { sale: 'AE-78402', amount: '58.00', recordedTender: 'Cash', actualTender: 'Card', approval: 'CTRL-2026-1031-058', evidence: 'CLOSE-78402 / PAY-66202 / SET-66202' },
+    manager: 'A card payment was recorded as cash. The manager confirmed the correction. The training finance authorization permits the correcting journal.' },
+  { id: 'FIN-1003', title: 'Cash deposit short', destination: 'Finance exception register', action: 'Submit cash / deposit review',
+    instruction: 'Save the count-sheet reference and manager explanation for finance review. The $49.99 shortage stays open; no cash write-off is authorized.',
+    fields: [field('basis', 'Comparison basis', 'select', ['Cash count', 'Bank deposit']), field('expected', 'Expected cash / deposit USD', 'money'), field('actual', 'Counted / deposited USD', 'money'), field('bag', 'Deposit bag'), field('countRef', 'Signed count sheet / deposit record'), field('reason', 'Manager-selected reason', 'select', ['Counting error', 'Unrecorded cash movement', 'Deposit discrepancy', 'Cause not established', 'Other']), field('explanation', 'Manager explanation', 'textarea'), evidence],
+    values: { basis: 'Bank deposit', expected: '920.00', actual: '870.01', bag: 'D-63109', countRef: 'COUNT-D-63109', reason: 'Cause not established', explanation: 'The signed count sheet and bank credit confirm $870.01 deposited in bag D-63109 against $920.00 expected. The $49.99 difference remains unexplained and requires finance review.', evidence: 'COUNT-D-63109 / CLOSE-1031 / DEP-63109' },
+    manager: 'The count sheet confirms the deposited amount and bag. Finance must review the evidence and explanation; the shortage remains open.' }
 ];
 const now = () => new Date().toISOString();
 const requireThat = (condition, message) => { if (!condition) throw Error(message); };
@@ -53,7 +33,7 @@ export function validDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
 export function initialState() {
-  return { version: VERSION, handoffs: definitions.map(d => ({ id: d.id, values: { ...d.values }, manager: 'Jamie Parker', confirmedAt: '2026-10-01T14:20:00Z', revision: 1 })),
+  return { version: VERSION, handoffs: definitions.map(d => ({ id: d.id, values: { ...d.values }, manager: 'Jordan Lee', confirmedAt: '2026-11-02T14:20:00Z', revision: 1 })),
     records: {}, journals: [], requests: [], audit: [], balances: { '110100': 410000, '110200': 8240000, '110300': 100000 }, nextJournal: 100241, nextRecord: 10001, nextRequest: 70001 };
 }
 export function getDefinition(id) {
@@ -135,7 +115,7 @@ export function saveWriteback(state, id, data) {
 }
 export function journalPlan(state) {
   const h = getHandoff(state, 'FIN-1002');
-  return { caseId: h.id, company: '100', unit: '0412', date: '2026-09-30', reference: `${h.id}-RECLASS`, source: h.values.sale, approval: h.values.approval,
+  return { caseId: h.id, company: '100', unit: '0427', date: '2026-10-31', reference: `${h.id}-RECLASS`, source: h.values.sale, approval: h.values.approval,
     debitAccount: tenderAccount[h.values.actualTender], creditAccount: tenderAccount[h.values.recordedTender], amount: cents(h.values.amount), revision: h.revision };
 }
 export function validateJournal(state, data, existingId = null) {
@@ -247,12 +227,44 @@ export function stageBatch(state, inputs, revisions, attest) {
       continue;
     }
     const value = inputs[d.id], key = d.id === 'FIN-1003' ? 'actual' : 'amount';
-    const values = { ...h.values, [key]: value, attest: true };
+    const values = { ...h.values, [key]: value, ...(d.id === 'FIN-1003' ? { countRef: inputs.countRef, explanation: inputs.explanation } : {}), attest: true };
     if (d.id === 'FIN-1002') {
       validateWriteback(scratch, d.id, values);
       const plan = journalPlan(scratch);
-      saveJournal(scratch, { ...plan, description: `Reclassify ${h.values.recordedTender} to ${h.values.actualTender} per approved handoff`, debit: value, credit: value, attest: true });
+      saveJournal(scratch, { ...plan, description: inputs.journalDescription, debit: value, credit: value, attest: true });
     } else saveWriteback(scratch, d.id, values);
   }
   Object.assign(state, scratch);
+}
+
+
+// Each manager-confirmed demo handover gets an isolated ledger. Reopening the
+// same URL resumes that ledger; new runs never erase or silently reuse old work.
+export function runContext(search) {
+  const params = new URLSearchParams(search), runId = params.get('run') || 'manual';
+  requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(runId), 'Invalid demo run reference.');
+  const seed = initialState();
+  const raw = params.get('handoff');
+  if (raw) {
+    requireThat(raw.length <= 16000, 'Approved handoff is too large.');
+    const p = JSON.parse(raw);
+    requireThat(p.schemaVersion === 1 && p.runId === runId && p.store === '0427', 'Approved handoff scope does not match this run.');
+    requireThat(Array.isArray(p.cases) && p.cases.length === 2 && new Set(p.cases.map(c => c.id)).size === 2, 'Exactly two approved handoffs are required.');
+    for (const d of definitions) {
+      const packet = p.cases.find(c => c.id === d.id);
+      requireThat(packet && packet.manager === 'Jordan Lee' && typeof packet.confirmedAt === 'string' && !Number.isNaN(Date.parse(packet.confirmedAt)), 'Manager confirmation is missing.');
+      const values = normalize(d.id, packet.values);
+      if (d.id === 'FIN-1002') requireThat(values.sale === 'AE-78402' && cents(values.amount) === 5800 && values.recordedTender === 'Cash' && values.actualTender === 'Card' && values.approval === d.values.approval, 'Payment correction must match the approved $58.00 cash-to-card case.');
+      else requireThat(cents(values.expected) === 92000 && cents(values.actual) === 87001 && values.bag === 'D-63109', 'Deposit handoff must match $920.00 expected, $870.01 deposited and bag D-63109.');
+      Object.assign(getHandoff(seed, d.id), { values, manager: packet.manager, confirmedAt: packet.confirmedAt });
+    }
+  }
+  return { key: `${STORAGE_KEY}:${runId}`, runId, seed, imported: !!raw };
+}
+export function restoreRun(context, raw) {
+  if (!raw) return structuredClone(context.seed);
+  const saved = JSON.parse(raw);
+  requireThat(saved.version === VERSION, 'Saved ledger version does not match this run.');
+  if (context.imported) requireThat(JSON.stringify(saved.handoffs) === JSON.stringify(context.seed.handoffs), 'This run already has a different approved handoff. Open its original link or create a new manager review.');
+  return saved;
 }

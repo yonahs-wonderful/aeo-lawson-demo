@@ -1,152 +1,20 @@
-import { test } from 'node:test';
+import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, definitions, cents, validDate, configureHandoff, getHandoff, saveWriteback, journalPlan, saveJournal, releaseJournal, postJournal, completionReport } from '../ledger.js';
-const input = (s, id, overrides = {}) => ({ ...getHandoff(s, id).values, attest: true, ...overrides });
-const journalInput = s => { const p = journalPlan(s); return { ...p, debit: (p.amount / 100).toFixed(2), credit: (p.amount / 100).toFixed(2), description: 'Reclassify verified payment method', attest: true }; };
-const unchangedOnError = (s, action) => { const before = JSON.stringify(s); assert.throws(action); assert.equal(JSON.stringify(s), before); };
+import {initialState,definitions,cents,validDate,configureHandoff,getHandoff,saveWriteback,journalPlan,saveJournal,releaseJournal,postJournal,completionReport,stageBatch,runContext,restoreRun} from '../ledger.js';
+const input=(s,id,changes={})=>({...getHandoff(s,id).values,attest:true,...changes});
+const journalInput=s=>{const p=journalPlan(s);return {...p,debit:(p.amount/100).toFixed(2),credit:(p.amount/100).toFixed(2),description:'Reclassify approved card payment recorded as cash',attest:true}};
+const batchInput=s=>({'FIN-1002':getHandoff(s,'FIN-1002').values.amount,'FIN-1003':getHandoff(s,'FIN-1003').values.actual,countRef:getHandoff(s,'FIN-1003').values.countRef,explanation:getHandoff(s,'FIN-1003').values.explanation,journalDescription:'Correct cash-to-card classification'});
+const revisions=s=>Object.fromEntries(s.handoffs.map(h=>[h.id,h.revision]));
+const unchanged=(s,fn)=>{const before=structuredClone(s);assert.throws(fn);assert.deepEqual(s,before)};
+function finish(s){stageBatch(s,batchInput(s),revisions(s),true);releaseJournal(s,s.journals[0].id);postJournal(s,s.journals[0].id);return s}
 
-test('six exact customer scenarios replace the old accounting-upload fixture', () => {
-  const s = initialState(); assert.equal(s.version, 2); assert.equal(s.handoffs.length, 6);
-  assert.deepEqual(definitions.map(d => d.id), ['FIN-1001', 'FIN-1002', 'FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']);
-  assert.match(definitions[5].title, /Duplicate charge/);
-});
-test('all six workflows save facts, route requests correctly and change only the authorized GL accounts', () => {
-  const s = initialState(), base = { ...s.balances };
-  for (const id of ['FIN-1001', 'FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) saveWriteback(s, id, input(s, id));
-  assert.deepEqual(s.balances, base); assert.equal(s.requests.length, 4);
-  assert.equal(s.records['FIN-1001'].status, 'Timing explained — settlement matched');
-  assert.equal(s.records['FIN-1003'].status, 'Pending finance review');
-  assert.equal(s.records['FIN-1004'].status, 'Pending payments review');
-  assert.equal(s.records['FIN-1005'].status, 'Pending payments execution');
-  assert.equal(s.records['FIN-1006'].status, 'Pending payments execution');
-  const j = saveJournal(s, journalInput(s));
-  assert.deepEqual(s.balances, base); unchangedOnError(s, () => postJournal(s, j.id));
-  releaseJournal(s, j.id); assert.deepEqual(s.balances, base); postJournal(s, j.id);
-  assert.equal(s.balances['110200'], base['110200'] + 32000); assert.equal(s.balances['110100'], base['110100'] - 32000);
-  assert.equal(Object.values(s.balances).reduce((a, b) => a + b), Object.values(base).reduce((a, b) => a + b));
-  assert.equal(Object.keys(s.records).length, 6); assert.equal(s.audit.length, 8);
-  assert.equal(s.records['FIN-1002'].values.recordedTender, 'Cash'); assert.equal(s.records['FIN-1002'].values.actualTender, 'Card');
-  unchangedOnError(s, () => postJournal(s, j.id)); unchangedOnError(s, () => saveJournal(s, journalInput(s)));
-  for (const id of ['FIN-1001', 'FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) unchangedOnError(s, () => saveWriteback(s, id, input(s, id)));
-  const restored = JSON.parse(JSON.stringify(s)); assert.equal(restored.journals[0].status, 'Posted'); assert.equal(restored.requests[3].values.target, 'PAY-1006-B');
-});
-test('edited handoff amounts and tender accounts propagate without seeded amount restrictions', () => {
-  const s = initialState(); configureHandoff(s, 'FIN-1002', input(s, 'FIN-1002', { amount: '467.89', actualTender: 'Gift card' }));
-  const p = journalPlan(s); assert.equal(p.amount, 46789); assert.equal(p.debitAccount, '110300');
-  const j = saveJournal(s, journalInput(s)); releaseJournal(s, j.id); postJournal(s, j.id);
-  assert.equal(s.balances['110300'], 146789); assert.equal(s.balances['110100'], 363211);
-  configureHandoff(s, 'FIN-1001', input(s, 'FIN-1001', { amount: '99.47', settlement: 'MY-SET-99' }));
-  const r = saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001')); assert.equal(r.amount, 9947); assert.equal(r.values.settlement, 'MY-SET-99');
-});
-test('amounts, references and attestation must match the current manager handoff', () => {
-  const s = initialState();
-  for (const id of ['FIN-1001', 'FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) unchangedOnError(s, () => saveWriteback(s, id, input(s, id, { attest: false })));
-  unchangedOnError(s, () => saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001', { amount: '1.00' })));
-  unchangedOnError(s, () => saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001', { settlement: 'WRONG' })));
-  unchangedOnError(s, () => saveWriteback(s, 'FIN-1002', input(s, 'FIN-1002')));
-});
-test('cash variance requires signed evidence, reason and explanation and never posts a write-off', () => {
-  const s = initialState();
-  for (const f of ['countRef', 'reason', 'explanation', 'evidence']) unchangedOnError(s, () => saveWriteback(s, 'FIN-1003', input(s, 'FIN-1003', { [f]: '' })));
-  configureHandoff(s, 'FIN-1003', input(s, 'FIN-1003', { expected: '100.00', actual: '0.00', explanation: 'Signed count confirms no cash; finance to investigate.' }));
-  const balances = { ...s.balances }, r = saveWriteback(s, 'FIN-1003', input(s, 'FIN-1003'));
-  assert.equal(r.amount, 10000); assert.equal(r.status, 'Pending finance review'); assert.deepEqual(s.balances, balances); assert.equal(s.journals.length, 0);
-});
-test('chargeback unavailable-evidence branch requires an explanation and preserves the deadline', () => {
-  const s = initialState();
-  unchangedOnError(s, () => configureHandoff(s, 'FIN-1004', input(s, 'FIN-1004', { evidenceStatus: 'Unavailable', evidence: '', explanation: '' })));
-  configureHandoff(s, 'FIN-1004', input(s, 'FIN-1004', { evidenceStatus: 'Unavailable', evidence: '', explanation: 'Pickup signature cannot be located.' }));
-  saveWriteback(s, 'FIN-1004', input(s, 'FIN-1004')); assert.equal(s.requests[0].values.deadline, '2026-10-23'); assert.equal(s.requests[0].values.explanation, 'Pickup signature cannot be located.');
-});
-test('pending and unknown refunds block retries; completed refunds can only be linked', () => {
-  for (const status of ['Existing refund pending', 'Existing refund completed', 'Unable to determine']) {
-    const s = initialState(); unchangedOnError(s, () => configureHandoff(s, 'FIN-1005', input(s, 'FIN-1005', { existingStatus: status, existingRefund: 'RF-FOUND', action: 'Refund retry request' })));
-  }
-  const pending = initialState(); configureHandoff(pending, 'FIN-1005', input(pending, 'FIN-1005', { existingStatus: 'Existing refund pending', existingRefund: 'RF-PENDING', action: 'Escalate to payments' }));
-  saveWriteback(pending, 'FIN-1005', input(pending, 'FIN-1005')); assert.equal(pending.requests[0].status, 'Pending payments review');
-  const completed = initialState(); configureHandoff(completed, 'FIN-1005', input(completed, 'FIN-1005', { existingStatus: 'Existing refund completed', existingRefund: 'RF-COMPLETED', action: 'Link existing refund' }));
-  const r = saveWriteback(completed, 'FIN-1005', input(completed, 'FIN-1005')); assert.equal(r.status, 'Resolved — existing refund linked'); assert.equal(completed.requests.length, 0);
-});
-test('duplicate customer charge requires distinct payment records and targets only the nonretained charge', () => {
-  const s = initialState();
-  for (const override of [{ target: 'PAY-1006-A' }, { retain: 'NOT-A-PAYMENT' }, { paymentB: 'PAY-1006-A' }]) unchangedOnError(s, () => configureHandoff(s, 'FIN-1006', input(s, 'FIN-1006', override)));
-  configureHandoff(s, 'FIN-1006', input(s, 'FIN-1006', { retain: 'PAY-1006-B', target: 'PAY-1006-A', action: 'Refund request', amount: '75.25' }));
-  const r = saveWriteback(s, 'FIN-1006', input(s, 'FIN-1006')); assert.equal(r.values.retain, 'PAY-1006-B'); assert.equal(r.values.target, 'PAY-1006-A'); assert.equal(r.amount, 7525); assert.equal(s.journals.length, 0);
-});
-test('GL posting requires finance authorization, balanced exact amounts and correct accounts', () => {
-  const s = initialState();
-  for (const change of [{ credit: '319.99' }, { debit: '1', credit: '1' }, { date: '2026-10-01' }, { approval: 'WRONG' }, { debitAccount: '110100' }, { attest: false }, { caseId: 'FIN-1006' }]) unchangedOnError(s, () => saveJournal(s, { ...journalInput(s), ...change }));
-  configureHandoff(s, 'FIN-1002', input(s, 'FIN-1002', { approval: '' })); unchangedOnError(s, () => saveJournal(s, journalInput(s)));
-});
-test('saved or drafted work locks handoff changes', () => {
-  const s = initialState(); saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001')); unchangedOnError(s, () => configureHandoff(s, 'FIN-1001', input(s, 'FIN-1001', { amount: '99' })));
-  saveJournal(s, journalInput(s)); unchangedOnError(s, () => configureHandoff(s, 'FIN-1002', input(s, 'FIN-1002', { amount: '99' })));
-});
-test('invalid currency and dates are rejected without floating-point rounding', () => {
-  for (const v of ['-1', 'abc', '1.001', 'Infinity', '1e3', '', '0', '9007199254740992']) assert.throws(() => cents(v));
-  assert.equal(cents('467.89'), 46789); assert.equal(cents('0.01'), 1); assert.equal(cents('0', true), 0);
-  assert.equal(validDate('2026-02-30'), false); assert.equal(validDate('2026-10-01'), true);
-});
-
-test('completion verifies current handoffs, posted GL, linked requests and balances without mutation', async () => {
-  const { completionReport } = await import('../ledger.js');
-  const s = initialState(); assert.equal(completionReport(s).complete, false);
-  saveWriteback(s, 'FIN-1001', input(s, 'FIN-1001'));
-  assert.equal(completionReport(s).verified, 1);
-  for (const id of ['FIN-1003', 'FIN-1004', 'FIN-1005', 'FIN-1006']) saveWriteback(s, id, input(s, id));
-  const j = saveJournal(s, journalInput(s)); releaseJournal(s, j.id);
-  assert.equal(completionReport(s).complete, false);
-  postJournal(s, j.id);
-  const before = JSON.stringify(s), r = completionReport(s);
-  assert.equal(r.complete, true); assert.equal(r.verified, 6); assert.equal(r.pending, 4); assert.equal(r.posted, 1);
-  assert.deepEqual(completionReport(s), r); assert.equal(JSON.stringify(s), before);
-  for (const corrupt of [
-    x => { x.records['FIN-1002'].values.amount = '1.00'; },
-    x => { x.handoffs[0].revision++; },
-    x => { x.requests[0].values.expected = '1.00'; },
-    x => { x.requests[0].status = 'Executed'; },
-    x => { x.journals[0].status = 'Released'; },
-    x => { x.journals[0].debitAccount = '110300'; },
-    x => { x.balances['110100']++; },
-    x => { x.records['FIN-1006'].requestId = 'MISSING'; },
-    x => { x.requests.push({ ...x.requests[0] }); }
-  ]) { const broken = structuredClone(s); corrupt(broken); assert.equal(completionReport(broken).complete, false); }
-});
-
-test('batch staging is atomic, honors changed handoffs and preserves separate GL controls', async () => {
-  const { stageBatch } = await import('../ledger.js');
-  const s = initialState();
-  configureHandoff(s, 'FIN-1001', { ...s.handoffs[0].values, amount: '89.17', settlement: 'CUSTOM-BATCH-SETTLEMENT' });
-  const inputs = Object.fromEntries(s.handoffs.map(h => [h.id, h.values[h.id === 'FIN-1003' ? 'actual' : 'amount']]));
-  const revisions = Object.fromEntries(s.handoffs.map(h => [h.id, h.revision]));
-  const before = structuredClone(s);
-  assert.throws(() => stageBatch(s, { ...inputs, 'FIN-1006': '0.01' }, revisions, true), /match/);
-  assert.deepEqual(s, before);
-  assert.throws(() => stageBatch(s, inputs, { ...revisions, 'FIN-1001': 1 }, true), /changed/);
-  assert.throws(() => stageBatch(s, inputs, revisions, false), /attest/);
-  stageBatch(s, inputs, revisions, true);
-  assert.equal(Object.keys(s.records).length, 5);
-  assert.equal(s.records['FIN-1001'].values.settlement, 'CUSTOM-BATCH-SETTLEMENT');
-  assert.equal(s.records['FIN-1001'].amount, 8917);
-  assert.deepEqual(s.balances, before.balances);
-  assert.equal(s.journals[0].status, 'Unreleased');
-  assert.equal(s.requests.length, 4);
-  const staged = structuredClone(s);
-  stageBatch(s, {}, revisions, true); assert.deepEqual(s, staged);
-  assert.throws(() => postJournal(s, s.journals[0].id), /released/);
-  releaseJournal(s, s.journals[0].id); assert.deepEqual(s.balances, before.balances);
-  postJournal(s, s.journals[0].id); assert.equal(completionReport(s).complete, true);
-  const posted = structuredClone(s); stageBatch(s, {}, revisions, true); assert.deepEqual(s, posted);
-});
-
-test('batch staging cannot bypass missing finance authorization or corrupted saved work', async () => {
-  const { stageBatch } = await import('../ledger.js');
-  const s = initialState(); configureHandoff(s, 'FIN-1002', { ...s.handoffs[1].values, approval: '' });
-  const inputs = Object.fromEntries(s.handoffs.map(h => [h.id, h.values[h.id === 'FIN-1003' ? 'actual' : 'amount']]));
-  const revisions = Object.fromEntries(s.handoffs.map(h => [h.id, h.revision]));
-  const before = structuredClone(s);
-  assert.throws(() => stageBatch(s, inputs, revisions, true), /authorization/); assert.deepEqual(s, before);
-  const valid = initialState(); stageBatch(valid, inputs, Object.fromEntries(valid.handoffs.map(h => [h.id, h.revision])), true);
-  valid.requests[0].amount = 1;
-  assert.throws(() => stageBatch(valid, {}, Object.fromEntries(valid.handoffs.map(h => [h.id, h.revision])), true), /verification/);
-});
+test('only the two current cases exist, with exact amounts, store and bag',()=>{const s=initialState();assert.equal(s.version,3);assert.deepEqual(definitions.map(d=>d.id),['FIN-1002','FIN-1003']);assert.equal(s.handoffs[0].values.amount,'58.00');assert.equal(s.handoffs[1].values.expected,'920.00');assert.equal(s.handoffs[1].values.actual,'870.01');assert.equal(s.handoffs[1].values.bag,'D-63109');assert.equal(journalPlan(s).unit,'0427')});
+test('both write-backs require real entry and retain separate release/post controls',()=>{const s=initialState(),base={...s.balances};stageBatch(s,batchInput(s),revisions(s),true);assert.equal(Object.keys(s.records).length,1);assert.equal(s.requests.length,1);assert.equal(s.records['FIN-1003'].amount,4999);assert.equal(s.records['FIN-1003'].status,'Pending finance review');assert.deepEqual(s.balances,base);assert.equal(s.journals[0].status,'Unreleased');unchanged(s,()=>postJournal(s,s.journals[0].id));releaseJournal(s,s.journals[0].id);assert.deepEqual(s.balances,base);postJournal(s,s.journals[0].id);assert.equal(s.balances['110100'],base['110100']-5800);assert.equal(s.balances['110200'],base['110200']+5800);assert.equal(s.audit.length,4);assert.equal(completionReport(s).verified,2);assert.equal(completionReport(s).complete,true);const before=structuredClone(s);stageBatch(s,{},revisions(s),true);assert.deepEqual(s,before);unchanged(s,()=>postJournal(s,s.journals[0].id))});
+test('mistyped money, count reference or explanation cannot partially save a batch',()=>{for(const change of [{'FIN-1002':'58.01'},{'FIN-1003':'49.99'},{countRef:'wrong'},{explanation:'Invented explanation'},{journalDescription:''}]){const s=initialState();unchanged(s,()=>stageBatch(s,{...batchInput(s),...change},revisions(s),true))}const s=initialState();unchanged(s,()=>stageBatch(s,batchInput(s),revisions(s),false));unchanged(s,()=>stageBatch(s,batchInput(s),{'FIN-1002':2,'FIN-1003':1},true))});
+test('cash evidence, reason, explanation and bag are required, with no GL write-off',()=>{for(const key of ['countRef','reason','explanation','bag','evidence']){const s=initialState();unchanged(s,()=>saveWriteback(s,'FIN-1003',input(s,'FIN-1003',{[key]:''})))}const s=initialState(),balances={...s.balances};const r=saveWriteback(s,'FIN-1003',input(s,'FIN-1003'));assert.equal(r.amount,4999);assert.deepEqual(s.balances,balances);assert.equal(s.journals.length,0);assert.equal(s.requests[0].values.bag,'D-63109')});
+test('GL requires independent finance authority, balanced exact lines and correct accounts',()=>{const s=initialState();for(const changes of [{credit:'57.99'},{debit:'1',credit:'1'},{date:'2026-09-30'},{approval:'WRONG'},{debitAccount:'110100'},{attest:false}])unchanged(s,()=>saveJournal(s,{...journalInput(s),...changes}));configureHandoff(s,'FIN-1002',input(s,'FIN-1002',{approval:''}));unchanged(s,()=>saveJournal(s,journalInput(s)));unchanged(s,()=>stageBatch(s,batchInput(s),revisions(s),true))});
+test('completion validates saved evidence, linked requests, posted GL and balances',()=>{const s=finish(initialState());for(const corrupt of [x=>x.records['FIN-1003'].values.explanation='other',x=>x.handoffs[0].revision++,x=>x.requests[0].values.actual='1',x=>x.requests[0].status='Executed',x=>x.journals[0].status='Released',x=>x.balances['110100']++,x=>x.records['FIN-1003'].requestId='missing',x=>x.requests.push({...x.requests[0]})]){const copy=structuredClone(s);corrupt(copy);assert.equal(completionReport(copy).complete,false)}const before=JSON.stringify(s);assert.equal(completionReport(s).posted,1);assert.equal(completionReport(s).pending,1);assert.equal(JSON.stringify(s),before)});
+test('new demo contexts stay fresh while retries restore the exact saved work',()=>{const a=runContext('?run=demo-first-000001'),b=runContext('?run=demo-second-00002');assert.notEqual(a.key,b.key);const saved=finish(a.seed);const retry=restoreRun(a,JSON.stringify(saved));assert.equal(completionReport(retry).complete,true);assert.equal(Object.keys(restoreRun(b,null).records).length,0)});
+test('manager handoff import carries the actual uploaded evidence and explanation and blocks conflicts',()=>{const p={schemaVersion:1,runId:'demo-import-00001',store:'0427',cases:initialState().handoffs.map(h=>({...h}))};p.cases[1].values.countRef='upload-count-test';p.cases[1].values.evidence='CLOSE-1031 / DEP-63109 / upload-count-test';p.cases[1].values.explanation='Manager checked bag D-63109; cause unknown.';const params=new URLSearchParams({run:p.runId,handoff:JSON.stringify(p)}),c=runContext('?'+params);assert.equal(c.seed.handoffs[1].values.countRef,'upload-count-test');assert.equal(c.seed.handoffs[1].values.explanation,p.cases[1].values.explanation);const saved=finish(restoreRun(c,null));assert.equal(completionReport(restoreRun(c,JSON.stringify(saved))).complete,true);saved.handoffs[1].values.explanation='conflict';assert.throws(()=>restoreRun(c,JSON.stringify(saved)),/different approved/);p.cases[1].values.actual='870.02';assert.throws(()=>runContext('?'+new URLSearchParams({run:p.runId,handoff:JSON.stringify(p)})),/Deposit handoff/)});
+test('saved work locks approved inputs and stale revisions are rejected',()=>{const s=initialState();saveJournal(s,journalInput(s));unchanged(s,()=>configureHandoff(s,'FIN-1002',input(s,'FIN-1002',{amount:'99'})));saveWriteback(s,'FIN-1003',input(s,'FIN-1003'));unchanged(s,()=>configureHandoff(s,'FIN-1003',input(s,'FIN-1003',{actual:'1'})))});
+test('currency/date parsing rejects malformed values without rounding',()=>{for(const v of ['-1','abc','1.001','Infinity','1e3','','0','9007199254740992'])assert.throws(()=>cents(v));assert.equal(cents('58.00'),5800);assert.equal(cents('0',true),0);assert.equal(validDate('2026-02-30'),false)});
