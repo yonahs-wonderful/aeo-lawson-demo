@@ -2,6 +2,43 @@
 
 Public site: https://yonahs-wonderful.github.io/aeo-lawson-demo/
 
+## Desktop account directory
+
+The SAP Logon desktop player reads its shared username-to-page mappings from
+[`accounts.json`](accounts.json), published at
+https://yonahs-wonderful.github.io/aeo-lawson-demo/accounts.json.
+The initial username **AE** opens the existing `#batch` page.
+
+To add or change a demo, [edit accounts.json on GitHub](https://github.com/yonahs-wonderful/aeo-lawson-demo/edit/main/accounts.json).
+Add an item with `username`, `name`, and `url` to the `accounts` array, then commit
+to `main`. Keep `version` set to `1`. Each username must be unique without regard
+to case, use 1–64 letters/numbers/periods/underscores/hyphens/@ signs, and start
+with a letter or number. Names are 1–120 characters; page URLs must use HTTPS.
+Different usernames may point to the same page. An empty array removes all accounts.
+
+```json
+{
+  "version": 1,
+  "accounts": [
+    {
+      "username": "AE",
+      "name": "American Eagle Outfitters financial reconciliation",
+      "url": "https://yonahs-wonderful.github.io/aeo-lawson-demo/#batch"
+    }
+  ]
+}
+```
+
+GitHub Pages publishes the file from the root of `main`. Once deployment finishes,
+desktop player 0.1.3 or later fetches it on launch and before each logon. Use
+**Account settings → Refresh** to reload the visible list. The desktop client
+also has a **Manage accounts** button that opens this file's GitHub editor.
+Adding or changing entries does not require a new app build after the initial
+0.1.3 upgrade. Existing open pages continue until the user logs off and logs on.
+An unavailable or invalid directory shows a connection error; old local mappings
+are never used as a fallback. The file is public and contains no passwords.
+The password field remains a simulated logon and is never sent to this directory.
+
 A static legacy-style destination for a computer-use agent after a store manager has reconciled six payment exceptions. All records are synthetic. No authentication or real payment execution. The UI is inspired by Lawson Portal; the reconciliation worklist, handoff setup and payments queues are illustrative extensions, not verified AEO or Infor screens.
 
 
