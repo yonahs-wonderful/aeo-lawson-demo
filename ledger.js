@@ -12,7 +12,7 @@ export const definitions = [
     instruction: 'Post and verify the approved $58.00 cash-to-card correcting journal. Revenue and total assets remain unchanged.',
     fields: [sale, amount, field('recordedTender', 'Recorded payment method', 'select', ['Cash', 'Card', 'Gift card']), field('actualTender', 'Actual payment method', 'select', ['Cash', 'Card', 'Gift card']), field('approval', 'Finance posting authorization', 'text', null, true), evidence],
     values: { sale: 'AE-78402', amount: '58.00', recordedTender: 'Cash', actualTender: 'Card', approval: 'CTRL-2026-1031-058', evidence: 'CLOSE-78402 / PAY-66202 / SET-66202' },
-    manager: 'A card payment was recorded as cash. The manager confirmed the correction. The training finance authorization permits the correcting journal.' },
+    manager: 'A card payment was recorded as cash. The manager confirmed the correction. The finance authorization permits the correcting journal.' },
   { id: 'FIN-1003', title: 'Cash deposit short', destination: 'Finance exception register', action: 'Submit cash / deposit review',
     instruction: 'Save the count-sheet reference and manager explanation for finance review. The $49.99 shortage stays open; no cash write-off is authorized.',
     fields: [field('basis', 'Comparison basis', 'select', ['Cash count', 'Bank deposit']), field('expected', 'Expected cash / deposit USD', 'money'), field('actual', 'Counted / deposited USD', 'money'), field('bag', 'Deposit bag'), field('countRef', 'Signed count sheet / deposit record'), field('reason', 'Manager-selected reason', 'select', ['Counting error', 'Unrecorded cash movement', 'Deposit discrepancy', 'Cause not established', 'Other']), field('explanation', 'Manager explanation', 'textarea'), evidence],
@@ -81,9 +81,9 @@ function normalize(id, data) {
 function log(state, event, caseId, detail) { state.audit.push({ at: now(), operator: 'FINOPS01', event, caseId, detail }); }
 export function configureHandoff(state, id, data) {
   const h = getHandoff(state, id), values = normalize(id, data);
-  requireThat(!state.records[id] && !state.journals.some(j => j.caseId === id), 'This handoff has saved work. Reset training data before changing its approved inputs.');
+  requireThat(!state.records[id] && !state.journals.some(j => j.caseId === id), 'This handoff has saved work. Reset workspace before changing its approved inputs.');
   h.values = values; h.revision++; h.confirmedAt = now();
-  log(state, 'HANDOFF_SETUP', id, `Training handoff revision ${h.revision} saved. Verified amount USD ${money(caseAmount(values))}.`);
+  log(state, 'HANDOFF_SETUP', id, `Handoff revision ${h.revision} saved. Verified amount USD ${money(caseAmount(values))}.`);
 }
 export function validateWriteback(state, id, data) {
   requireThat(!state.records[id], 'A write-back already exists for this case. Reopen the saved record; duplicate submission is blocked.');
@@ -91,7 +91,7 @@ export function validateWriteback(state, id, data) {
   const values = normalize(id, data), h = getHandoff(state, id);
   for (const f of getDefinition(id).fields) {
     const expected = h.values[f.name] || '', actual = values[f.name];
-    requireThat(f.type === 'money' ? cents(expected, f.name === 'actual') === cents(actual, f.name === 'actual') : expected === actual, `${f.label} must match the current verified handoff. Update Training handoff setup first if the demo inputs changed.`);
+    requireThat(f.type === 'money' ? cents(expected, f.name === 'actual') === cents(actual, f.name === 'actual') : expected === actual, `${f.label} must match the current verified handoff. Update Handoff Setup first if the approved inputs changed.`);
   }
   return values;
 }
@@ -242,7 +242,7 @@ export function stageBatch(state, inputs, revisions, attest) {
 // same URL resumes that ledger; new runs never erase or silently reuse old work.
 export function runContext(search) {
   const params = new URLSearchParams(search), runId = params.get('run') || 'manual';
-  requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(runId), 'Invalid demo run reference.');
+  requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(runId), 'Invalid review reference.');
   const seed = initialState();
   const raw = params.get('handoff');
   if (raw) {
